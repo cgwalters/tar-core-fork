@@ -250,9 +250,6 @@ impl<R: Read> TarStreamParser<R> {
     }
 
     fn handle_gnu_long_name(&mut self, size: u64, padded_size: u64) -> Result<()> {
-        if self.pending.gnu_long_name.is_some() {
-            return Err(ParseError::DuplicateGnuLongName);
-        }
         let new_metadata_size = self.pending.metadata_size + size;
         if new_metadata_size > self.limits.max_metadata_size as u64 {
             return Err(ParseError::MetadataTooLarge {
@@ -271,9 +268,6 @@ impl<R: Read> TarStreamParser<R> {
     }
 
     fn handle_gnu_long_link(&mut self, size: u64, padded_size: u64) -> Result<()> {
-        if self.pending.gnu_long_link.is_some() {
-            return Err(ParseError::DuplicateGnuLongLink);
-        }
         let new_metadata_size = self.pending.metadata_size + size;
         if new_metadata_size > self.limits.max_metadata_size as u64 {
             return Err(ParseError::MetadataTooLarge {
@@ -292,9 +286,6 @@ impl<R: Read> TarStreamParser<R> {
     }
 
     fn handle_pax_header(&mut self, size: u64, padded_size: u64) -> Result<()> {
-        if self.pending.pax_extensions.is_some() {
-            return Err(ParseError::DuplicatePaxHeader);
-        }
         let new_metadata_size = self.pending.metadata_size + size;
         if new_metadata_size > self.limits.max_metadata_size as u64 {
             return Err(ParseError::MetadataTooLarge {

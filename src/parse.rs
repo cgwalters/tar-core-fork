@@ -226,18 +226,6 @@ pub enum ParseError {
         limit: u32,
     },
 
-    /// Duplicate GNU long name entry without an intervening actual entry.
-    #[error("duplicate GNU long name entry")]
-    DuplicateGnuLongName,
-
-    /// Duplicate GNU long link entry without an intervening actual entry.
-    #[error("duplicate GNU long link entry")]
-    DuplicateGnuLongLink,
-
-    /// Duplicate PAX extended header without an intervening actual entry.
-    #[error("duplicate PAX extended header")]
-    DuplicatePaxHeader,
-
     /// Metadata entries (GNU long name, PAX, etc.) found but no actual entry followed.
     #[error("metadata entries without a following actual entry")]
     OrphanedMetadata,
@@ -960,20 +948,6 @@ impl Parser {
         kind: ExtensionKind,
         slices: PendingMetadata<'a>,
     ) -> Result<ParseEvent<'a>> {
-        // Check for duplicate
-        let has_dup = match kind {
-            ExtensionKind::GnuLongName => slices.gnu_long_name.is_some(),
-            ExtensionKind::GnuLongLink => slices.gnu_long_link.is_some(),
-            ExtensionKind::Pax => slices.pax_extensions.is_some(),
-        };
-        if has_dup {
-            return Err(match kind {
-                ExtensionKind::GnuLongName => ParseError::DuplicateGnuLongName,
-                ExtensionKind::GnuLongLink => ParseError::DuplicateGnuLongLink,
-                ExtensionKind::Pax => ParseError::DuplicatePaxHeader,
-            });
-        }
-
         // Check aggregate metadata size limit
         let new_metadata_size = slices.metadata_size + size;
         if new_metadata_size > self.limits.max_metadata_size as u64 {
@@ -2526,48 +2500,52 @@ mod tests {
     }
 
     #[test]
-    fn test_parser_duplicate_gnu_long_name() {
-        // Two GNU long name entries in a row should error
+    fn test_duplicate_pax_headers_last_wins() {
+        // Two PAX 'x' headers before a file: last one should win (last-wins semantics,
+        // matching GNU tar, Go archive/tar, Python tarfile behaviour).
         let mut archive = Vec::new();
-        archive.extend(make_gnu_long_name(b"first/long/name"));
-        archive.extend(make_gnu_long_name(b"second/long/name"));
-        archive.extend_from_slice(&make_header(b"file.txt", 0, b'0'));
+        archive.extend(make_pax_header(&[("path", b"first_name.txt")]));
+        archive.extend(make_pax_header(&[("path", b"second_name.txt")]));
+        archive.extend_from_slice(&make_header(b"placeholder.txt", 0, b'0'));
         archive.extend(zeroes(1024));
 
         let mut parser = Parser::new(Limits::default());
-        let result = parser.parse(&archive);
+        let event = parser.parse(&archive).unwrap();
 
-        assert!(matches!(result, Err(ParseError::DuplicateGnuLongName)));
+        match event {
+            ParseEvent::Entry { entry, .. } => {
+                assert_eq!(
+                    entry.path.as_ref(),
+                    b"second_name.txt",
+                    "last PAX header should win"
+                );
+            }
+            other => panic!("Expected Entry, got {:?}", other),
+        }
     }
 
     #[test]
-    fn test_parser_duplicate_gnu_long_link() {
-        // Two GNU long link entries in a row should error
+    fn test_duplicate_gnu_longname_last_wins() {
+        // Two GNU 'L' headers before a file: last one should win (last-wins semantics).
         let mut archive = Vec::new();
-        archive.extend(make_gnu_long_link(b"first/long/target"));
-        archive.extend(make_gnu_long_link(b"second/long/target"));
-        archive.extend_from_slice(&make_link_header(b"link", b"x", b'2'));
+        archive.extend(make_gnu_long_name(b"first_long_name.txt"));
+        archive.extend(make_gnu_long_name(b"second_long_name.txt"));
+        archive.extend_from_slice(&make_header(b"placeholder.txt", 0, b'0'));
         archive.extend(zeroes(1024));
 
         let mut parser = Parser::new(Limits::default());
-        let result = parser.parse(&archive);
+        let event = parser.parse(&archive).unwrap();
 
-        assert!(matches!(result, Err(ParseError::DuplicateGnuLongLink)));
-    }
-
-    #[test]
-    fn test_parser_duplicate_pax_header() {
-        // Two PAX headers in a row should error
-        let mut archive = Vec::new();
-        archive.extend(make_pax_header(&[("path", b"first")]));
-        archive.extend(make_pax_header(&[("path", b"second")]));
-        archive.extend_from_slice(&make_header(b"file.txt", 0, b'0'));
-        archive.extend(zeroes(1024));
-
-        let mut parser = Parser::new(Limits::default());
-        let result = parser.parse(&archive);
-
-        assert!(matches!(result, Err(ParseError::DuplicatePaxHeader)));
+        match event {
+            ParseEvent::Entry { entry, .. } => {
+                assert_eq!(
+                    entry.path.as_ref(),
+                    b"second_long_name.txt",
+                    "last GNU long name header should win"
+                );
+            }
+            other => panic!("Expected Entry, got {:?}", other),
+        }
     }
 
     // =========================================================================
